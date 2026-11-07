@@ -2,8 +2,8 @@
 
 > 本文件既作为需求文档第十节要求的 `docs/development_summary.md`，也记录本次开发会话中开发者的决策、反馈与调整过程。
 >
-> 会话日期：2026-11-06  
-> 当前状态：P0 功能已完成并通过本机实测；代码尚未提交 Git；打包与 README 尚未完成。
+> 会话日期：2026-11-06（初版） / 2026-11-07（内置工具与恢复默认）  
+> 当前状态：P0 功能已完成并通过本机实测；README 已补全；已完成 Qt Release 部署，发布包测试进行中；代码尚未提交 Git。
 
 ---
 
@@ -81,7 +81,8 @@ VideoConverter/
 │   └── bin/（ffmpeg.exe / ffprobe.exe，被 .gitignore 忽略）
 ├── build/（Qt Creator 缓存，不手改）
 ├── AGENTS.md
-├── README.md（目前仍是空壳）
+├── README.md（使用说明、构建步骤与已知限制）
+├── 会话总结.md（本文件）
 └── 视频格式转换器项目需求文档.md
 ```
 
@@ -164,8 +165,11 @@ ffmpeg -ss <min(1s, duration*10%)> -i <input> \
 
 ### 4.6 FFmpeg 定位与配置
 
-- 查找顺序：已保存配置 → 程序目录 → 程序目录/ffmpeg/bin → 编译期 `third_party/ffmpeg/bin` → 系统 PATH。
+- 查找顺序：用户自定义且文件存在 → 内置 `程序目录/third_party/ffmpeg/bin` → 程序目录 → 程序目录/ffmpeg/bin → 编译期 `third_party/ffmpeg/bin` → 系统 PATH。
+- ffmpeg 与 ffprobe 各自独立判断：配置路径必须非空且指向真实文件，否则单独回退内置工具。
+- 未配置或自定义路径失效时自动使用内置工具；`loadSettings()` 不再直接采用失效路径。
 - 配置保存到 `%APPDATA%\VideoConverter\VideoConverter.ini`（QSettings IniFormat）。
+- “工具设置”新增“恢复默认”：输入框切回内置路径，确定后删除两个配置键并重新解析。
 - 启动时异步执行 `ffmpeg -version`、`ffprobe -version`、`ffmpeg -encoders`。
 - 状态点：绿色可用、橙色缺少编码器、红色不可用。
 
@@ -222,7 +226,9 @@ ffmpeg -ss <min(1s, duration*10%)> -i <input> \
 ### 6.2 FFmpeg
 
 - 开发阶段使用本机 Windows x64 构建，放入 `third_party/ffmpeg/bin/`。
-- 支持配置 ffmpeg/ffprobe 路径。
+- 默认使用随发布包分发的内置工具：`程序目录/third_party/ffmpeg/bin/`。
+- 保留用户自定义：路径持久化，下次启动优先使用；文件失效时自动回退内置。
+- “工具设置”提供“恢复默认”，删除配置并切回内置工具。
 - 启动时检查程序和编码器可用性。
 - 暂不把二进制提交 GitHub；正式分发前再评估许可证。
 - 使用 QSettings IniFormat 保存到用户 AppData，不写程序目录。
@@ -301,6 +307,8 @@ ffmpeg -ss <min(1s, duration*10%)> -i <input> \
 | “优先修复视频导入区域的文字裁切问题” | 导入区标题 wordWrap 无宽度约束，长文件名/高 DPI 挤压下方文字 | 改为单行 + 中间省略 + 固定单行高度 + 高 DPI 图标，布局问题在代码中修复 |
 | “上传文件和缩略图同高不同宽，高宽固定只做小窗和全屏两个布局” | 原上传区比缩略图高 | 小窗 240 高、全屏 320 高；缩略图 427×240 / 569×320；上传区填满剩余宽度；最大化时切换 |
 | “ui 去 iconfont.cn 上找” | 原图标是手绘 | 从 iconfont.cn 取视频摄像机 SVG（ID 5387545），本地嵌入 qrc |
+| “放弃上述所有改动方案，放弃我刚才提出的需求” | FFmpeg 路径查找优化方案已输出 | 停止该方案，工作区保持原样 |
+| “将 FFmpeg 内置到 third_party/ffmpeg/bin……添加恢复默认工具的选项” | 发布包在干净机器上找不到工具 | 内置路径置顶、有效自定义优先、两个工具独立回退、新增“恢复默认”；不改转换核心业务逻辑 |
 
 ### 7.1 实现方自查过的偏差
 
@@ -373,6 +381,14 @@ nmake
 - 像素：Python PIL/numpy 统计颜色、内容宽度、标准差。
 - 输出：ffprobe 读取转换结果。
 
+### 8.5 本轮（内置工具与恢复默认）
+
+- 改动文件：`core/ffmpeglocator.h/.cpp`、`ui/settingsdialog.h/.cpp`、`widget.cpp`、`README.md`、`docs/development_summary.md`。
+- 行为：有效自定义路径优先 → 内置 `third_party/ffmpeg/bin` → 程序目录 → `ffmpeg/bin` → 编译期目录 → PATH；ffmpeg/ffprobe 独立回退；“恢复默认”删除配置键。
+- 静态验证：`git diff --check` 通过；行尾一致性检查通过（`widget.cpp` 全 CRLF，其余 LF）。
+- 范围确认：`videoconverter`、`mediaprobe`、`thumbnailgenerator`、`formatcatalog` 未改动。
+- 待执行：Windows Qt Creator Release 构建；发布包内验证内置默认、自定义持久化、恢复默认、内置缺失提示。
+
 ---
 
 ## 9. 已知限制与风险
@@ -380,10 +396,10 @@ nmake
 1. **未提交 Git**：当前所有改动都在工作区。
 2. **无 CI、无单元测试**：验证依赖本机 UI Automation 和人工测试。
 3. **P1/P2 未做**：批量转换、任务列表、历史记录、质量/分辨率设置、深色模式、打开输出目录。
-4. **README 仍是空壳**：根目录 `README.md` 只有标题。
-5. **未打包**：尚未执行 `windeployqt` 和安装包制作。
+4. **README 已补全**：构建、FFmpeg 放置、路径规则与已知限制均已记录。
+5. **发布包测试中**：已完成 Qt Release 部署，安装包制作与干净机器验证仍在进行。
 6. **FFmpeg 许可证**：当前 9.0.2 essentials 含 `--enable-gpl`，分发前需确认 GPL 义务。
-7. **FFmpeg 不入库**：`third_party/ffmpeg/bin/*` 被 `.gitignore` 忽略；迁移机器需重新放置。
+7. **FFmpeg 不入库**：`third_party/ffmpeg/bin/*` 被 `.gitignore` 忽略；发布包必须手动包含该目录，否则内置查找落空。
 8. **150% 为模拟**：通过 `QT_SCALE_FACTOR=1.2` 在 125% 系统上等效测试，非原生 150% 会话。
 9. **缩略图源 400px 宽**：全屏由界面平滑放大，极致清晰度需提高生成分辨率。
 10. **SVG 图标依赖 Qt imageformats 插件**：开发环境有 `qsvg.dll`；发布时 `windeployqt` 需包含，否则回退到手绘图标。
@@ -395,8 +411,8 @@ nmake
 ## 10. 后续建议
 
 1. 提交前检查 `git status`，只提交源码、qrc、QSS、图标和文档，不提交 FFmpeg 二进制。
-2. 补全根目录 `README.md`：构建步骤、FFmpeg 放置、运行方式、已知限制。
-3. 用 `windeployqt` 打包，确认 `qsvg.dll` 被包含；评估 FFmpeg 许可证。
+2. 在干净 Windows 机器上验证：内置默认、自定义持久化、恢复默认、内置缺失提示四条路径。
+3. 用 `windeployqt` 打包，确认 `qsvg.dll` 被包含且 `third_party/ffmpeg/bin/` 已随包复制；评估 FFmpeg 许可证。
 4. 增加解析层单元测试（FFprobe JSON、文件名去重、格式映射）。
 5. 如需全屏更清晰，把缩略图生成宽度从 400 提高到 800，并重新验证。
 6. 若时间允许，再做 P1：批量转换、任务列表、打开输出目录。

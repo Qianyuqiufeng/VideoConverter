@@ -1,10 +1,11 @@
 // =============================================================================
 // 模块：FFmpeg 工具设置对话框的实现（ui/settingsdialog.cpp）
 // -----------------------------------------------------------------------------
-// 界面结构：两行“路径输入框 + 浏览按钮” + 状态标签 + 检测/确定/取消按钮。
+// 界面结构：两行“路径输入框 + 浏览按钮” + 状态标签 + 检测/恢复默认/确定/取消按钮。
 // 交互逻辑：
 //   - 浏览选择后自动补全另一个工具（同目录时）；
 //   - “检测”走异步流程，按钮在检测期间禁用；
+//   - “恢复默认”把两个输入框切换回程序内置工具；
 //   - “确定”前做非空与存在性校验，路径可疑时允许用户二次确认。
 // =============================================================================
 
@@ -66,6 +67,8 @@ SettingsDialog::SettingsDialog(const FFmpegLocator *locator, QWidget *parent)
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     m_checkButton = buttons->addButton(QStringLiteral("检测"), QDialogButtonBox::ActionRole);
+    auto *resetButton = buttons->addButton(QStringLiteral("恢复默认"),
+                                           QDialogButtonBox::ResetRole);
 
     auto *mainLayout = new QVBoxLayout(this);
     mainLayout->addLayout(form);
@@ -75,9 +78,13 @@ SettingsDialog::SettingsDialog(const FFmpegLocator *locator, QWidget *parent)
     connect(ffmpegBrowse, &QPushButton::clicked, this, &SettingsDialog::browseFfmpeg);
     connect(ffprobeBrowse, &QPushButton::clicked, this, &SettingsDialog::browseFfprobe);
     connect(m_checkButton, &QPushButton::clicked, this, &SettingsDialog::startCheck);
+    connect(resetButton, &QPushButton::clicked, this, &SettingsDialog::restoreDefaults);
     connect(buttons, &QDialogButtonBox::accepted, this, &SettingsDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, this, &SettingsDialog::reject);
     connect(m_checker, &FFmpegLocator::checkFinished, this, &SettingsDialog::onCheckFinished);
+    // 用户一旦手动编辑路径，就不再是“恢复默认”状态。
+    connect(m_ffmpegEdit, &QLineEdit::textEdited, this, [this] { m_usingDefaults = false; });
+    connect(m_ffprobeEdit, &QLineEdit::textEdited, this, [this] { m_usingDefaults = false; });
 }
 
 // 返回输入框中的 ffmpeg 路径（已去除首尾空白）。
@@ -90,6 +97,11 @@ QString SettingsDialog::ffmpegPath() const
 QString SettingsDialog::ffprobePath() const
 {
     return m_ffprobeEdit->text().trimmed();
+}
+
+bool SettingsDialog::usingDefaults() const
+{
+    return m_usingDefaults;
 }
 
 // 浏览选择 ffmpeg.exe。
@@ -105,6 +117,7 @@ void SettingsDialog::browseFfmpeg()
         return;
 
     m_ffmpegEdit->setText(QDir::toNativeSeparators(file));
+    m_usingDefaults = false;
 
     if (m_ffprobeEdit->text().trimmed().isEmpty()) {
         const QString sibling =
@@ -125,6 +138,7 @@ void SettingsDialog::browseFfprobe()
         return;
 
     m_ffprobeEdit->setText(QDir::toNativeSeparators(file));
+    m_usingDefaults = false;
 
     if (m_ffmpegEdit->text().trimmed().isEmpty()) {
         const QString sibling =
@@ -132,6 +146,23 @@ void SettingsDialog::browseFfprobe()
         if (QFileInfo::exists(sibling))
             m_ffmpegEdit->setText(QDir::toNativeSeparators(sibling));
     }
+}
+
+// “恢复默认”：把两个输入框换成程序内置工具。
+// 内置工具缺失时不改动输入，避免清掉用户已有的可用配置。
+void SettingsDialog::restoreDefaults()
+{
+    const QString ffmpeg = FFmpegLocator::defaultFfmpegPath();
+    const QString ffprobe = FFmpegLocator::defaultFfprobePath();
+    if (ffmpeg.isEmpty() || ffprobe.isEmpty()) {
+        m_statusLabel->setText(QStringLiteral("未找到内置工具，请手动指定路径。"));
+        return;
+    }
+
+    m_ffmpegEdit->setText(QDir::toNativeSeparators(ffmpeg));
+    m_ffprobeEdit->setText(QDir::toNativeSeparators(ffprobe));
+    m_usingDefaults = true;
+    m_statusLabel->setText(QStringLiteral("已切换为内置工具，点击“确定”生效。"));
 }
 
 // 启动异步检测：

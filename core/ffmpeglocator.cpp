@@ -2,8 +2,9 @@
 // 模块：FFmpeg 工具定位与可用性自检（core/ffmpeglocator.cpp）
 // -----------------------------------------------------------------------------
 // 本文件实现三件事：
-//   1. 路径持久化：读写 INI 配置，并在缺失时自动探测；
-//   2. 路径搜索：程序目录 -> ffmpeg/bin -> 编译期 FFMPEG_BIN_DIR -> 系统 PATH；
+//   1. 路径持久化：读写 INI 配置，用户配置有效时优先使用；
+//   2. 路径搜索：内置 third_party/ffmpeg/bin -> 程序目录 -> ffmpeg/bin
+//      -> 编译期 FFMPEG_BIN_DIR -> 系统 PATH；
 //   3. 异步自检：三段式调用 ffmpeg / ffprobe，全程不阻塞界面。
 //
 // 线程模型：所有外部命令都通过 QProcess 异步执行，结果经信号回到 GUI 线程；
@@ -37,6 +38,12 @@ QString findInDir(const QString &dir, const QString &exeName)
 
     const QFileInfo candidate(QDir(dir).filePath(exeName));
     return candidate.isFile() ? candidate.absoluteFilePath() : QString();
+}
+
+// 判断一个用户配置的路径是否仍然可用：必须非空且指向真实文件。
+bool isUsableFile(const QString &path)
+{
+    return !path.isEmpty() && QFileInfo(path).isFile();
 }
 
 } // namespace
@@ -77,25 +84,59 @@ FFmpegLocator::FFmpegLocator(QObject *parent)
     });
 }
 
-// 读取配置：优先使用用户手动指定的路径；未指定时尝试自动探测。
-// ffprobe 会优先在 ffmpeg 同目录查找，因为二者通常来自同一份发行包。
+// 读取配置：用户手动指定且仍然存在的路径优先；否则回退到内置工具。
 void FFmpegLocator::loadSettings()
 {
     const QSettings settings(settingsFilePath(), QSettings::IniFormat);
-    m_ffmpegPath = settings.value(QStringLiteral("tools/ffmpegPath")).toString().trimmed();
-    m_ffprobePath = settings.value(QStringLiteral("tools/ffprobePath")).toString().trimmed();
+    resolveEffectivePaths(
+        settings.value(QStringLiteral("tools/ffmpegPath")).toString().trimmed(),
+        settings.value(QStringLiteral("tools/ffprobePath")).toString().trimmed());
+}
 
-    if (m_ffmpegPath.isEmpty())
-        m_ffmpegPath = resolveTool(QStringLiteral("ffmpeg"));
+// 逐个工具决定最终路径，两个工具的判断互不影响：
+//   - 配置路径有效 -> 直接使用（用户自定义优先）；
+//   - 配置缺失或失效 -> 使用内置工具。
+// 内置查找失败时保持空字符串，由自检统一提示用户重新配置。
+void FFmpegLocator::resolveEffectivePaths(const QString &savedFfmpegPath,
+                                          const QString &savedFfprobePath)
+{
+    m_ffmpegPath = isUsableFile(savedFfmpegPath) ? savedFfmpegPath
+                                                 : resolveTool(QStringLiteral("ffmpeg"));
 
-    if (m_ffprobePath.isEmpty()) {
-        if (!m_ffmpegPath.isEmpty()) {
-            m_ffprobePath = findInDir(QFileInfo(m_ffmpegPath).absolutePath(),
-                                      QStringLiteral("ffprobe.exe"));
-        }
-        if (m_ffprobePath.isEmpty())
-            m_ffprobePath = resolveTool(QStringLiteral("ffprobe"));
+    if (isUsableFile(savedFfprobePath)) {
+        m_ffprobePath = savedFfprobePath;
+        return;
     }
+
+    // 两个工具通常来自同一份发行包：优先在有效的 ffmpeg 同目录查找 ffprobe。
+    m_ffprobePath = m_ffmpegPath.isEmpty()
+                        ? QString()
+                        : findInDir(QFileInfo(m_ffmpegPath).absolutePath(),
+                                    QStringLiteral("ffprobe.exe"));
+    if (m_ffprobePath.isEmpty())
+        m_ffprobePath = resolveTool(QStringLiteral("ffprobe"));
+}
+
+// 内置工具路径：忽略用户配置，按固定顺序在程序目录下查找。
+QString FFmpegLocator::defaultFfmpegPath()
+{
+    return resolveTool(QStringLiteral("ffmpeg"));
+}
+
+QString FFmpegLocator::defaultFfprobePath()
+{
+    return resolveTool(QStringLiteral("ffprobe"));
+}
+
+// 恢复默认：删除配置中的两个键并落盘，然后把内存路径重置为内置工具。
+void FFmpegLocator::restoreDefaults()
+{
+    QSettings settings(settingsFilePath(), QSettings::IniFormat);
+    settings.remove(QStringLiteral("tools/ffmpegPath"));
+    settings.remove(QStringLiteral("tools/ffprobePath"));
+    settings.sync();
+
+    resolveEffectivePaths(QString(), QString());
 }
 
 // 保存路径到 INI 配置。sync() 确保立即写盘，避免程序异常退出时丢失设置。
@@ -282,8 +323,8 @@ void FFmpegLocator::finishWithError(const QString &userMessage, const QString &d
 }
 
 // 按约定顺序搜索工具：找到即返回绝对路径，全部失败才返回空字符串。
-// 搜索顺序体现“随程序分发优先、系统安装兜底”的原则。
-QString FFmpegLocator::resolveTool(const QString &toolName) const
+// 搜索顺序体现“随程序分发的内置工具优先、系统安装兜底”的原则。
+QString FFmpegLocator::resolveTool(const QString &toolName)
 {
     const QString exeName = toolName.endsWith(QStringLiteral(".exe"), Qt::CaseInsensitive)
                                 ? toolName
@@ -291,23 +332,30 @@ QString FFmpegLocator::resolveTool(const QString &toolName) const
 
     const QString appDir = QCoreApplication::applicationDirPath();
 
-    // 1) 可执行文件同目录：用户把 ffmpeg.exe 直接放在程序旁边。
-    QString path = findInDir(appDir, exeName);
+    // 1) 随程序分发的内置工具：发布目录下 third_party/ffmpeg/bin。
+    QString path = findInDir(
+        QDir(appDir).filePath(QStringLiteral("third_party/ffmpeg/bin")), exeName);
     if (!path.isEmpty())
         return path;
 
-    // 2) 程序目录下的 ffmpeg/bin 子目录：便携版常见布局。
+    // 2) 可执行文件同目录：用户把 ffmpeg.exe 直接放在程序旁边。
+    path = findInDir(appDir, exeName);
+    if (!path.isEmpty())
+        return path;
+
+    // 3) 程序目录下的 ffmpeg/bin 子目录：便携版常见布局。
     path = findInDir(QDir(appDir).filePath(QStringLiteral("ffmpeg/bin")), exeName);
     if (!path.isEmpty())
         return path;
 
-    // 3) 编译期写入的 third_party/ffmpeg/bin（见 VideoConverter.pro 的 DEFINES）。
+    // 4) 编译期写入的 third_party/ffmpeg/bin（见 VideoConverter.pro 的 DEFINES）：
+    //    仅用于开发机构建输出目录与源码目录分离的场景。
 #ifdef FFMPEG_BIN_DIR
     path = findInDir(QString::fromUtf8(FFMPEG_BIN_DIR), exeName);
     if (!path.isEmpty())
         return path;
 #endif
 
-    // 4) 系统 PATH。找不到时返回空字符串，由调用方提示用户手动配置。
+    // 5) 系统 PATH。找不到时返回空字符串，由调用方提示用户手动配置。
     return QStandardPaths::findExecutable(toolName);
 }

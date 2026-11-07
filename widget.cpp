@@ -208,14 +208,19 @@ Widget::~Widget()
 }
 
 // 打开设置对话框。用户确认后：应用新路径 -> 持久化 -> 立即重新自检。
+// 点击“恢复默认”时改为清除配置，让程序回到内置工具。
 void Widget::openSettings()
 {
     SettingsDialog dialog(m_locator, this);
     if (dialog.exec() != QDialog::Accepted)
         return;
 
-    m_locator->setPaths(dialog.ffmpegPath(), dialog.ffprobePath());
-    m_locator->saveSettings();
+    if (dialog.usingDefaults()) {
+        m_locator->restoreDefaults();
+    } else {
+        m_locator->setPaths(dialog.ffmpegPath(), dialog.ffprobePath());
+        m_locator->saveSettings();
+    }
     m_locator->checkAsync();
 }
 

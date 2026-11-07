@@ -36,6 +36,8 @@ public:
     // 用户填写（或浏览选择）的工具路径，已去除首尾空白。
     QString ffmpegPath() const;
     QString ffprobePath() const;
+    // 用户是否选择了“恢复默认”：此时调用方应清除配置而不是保存当前路径。
+    bool usingDefaults() const;
 
 protected:
     // 重写“确定”：先校验路径完整性，再决定是否真正关闭对话框。
@@ -45,6 +47,8 @@ private:
     // 打开文件对话框选择 ffmpeg.exe / ffprobe.exe。
     void browseFfmpeg();
     void browseFfprobe();
+    // 把两个输入框重置为程序内置工具；找不到内置工具时只提示，不改动输入。
+    void restoreDefaults();
     // 用当前输入的路径启动一次异步检测。
     void startCheck();
     // 检测结束：更新状态文本与 ToolTip，并恢复“检测”按钮。
@@ -58,6 +62,8 @@ private:
     QPushButton *m_checkButton = nullptr;
     // 对话框私有的检测器，避免影响主窗口的 FFmpegLocator 状态。
     FFmpegLocator *m_checker = nullptr;
+    // 是否通过“恢复默认”得到了当前路径；用户再手动选择或编辑时清除。
+    bool m_usingDefaults = false;
 };
 
 #endif // SETTINGSDIALOG_H

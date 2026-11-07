@@ -20,7 +20,8 @@
 - **转换进度**：解析 `ffmpeg -progress`，按 FFprobe 给出的总时长换算百分比，并显示编码速度。
 - **取消与退出保护**：可随时取消；转换中关闭窗口会先询问，取消完成后才退出。
 - **输出复检**：转换结束后用 FFprobe 重新解析输出文件，避免“进程成功但文件无效”。
-- **FFmpeg 自检**：启动时异步检查 `ffmpeg` / `ffprobe` 版本与所需编码器，状态栏用颜色区分。
+- **内置工具优先**：默认使用程序目录下 `third_party/ffmpeg/bin` 的 FFmpeg/FFprobe；也支持自定义路径并持久化，可一键恢复默认。
+- **FFmpeg 自检**：启动时异步检查两个工具的版本与所需编码器，状态栏用颜色区分。
 
 ## 环境要求
 
@@ -31,7 +32,7 @@
 | Qt | Qt 6.8.2，MSVC2022 64-bit 套件 |
 | 语言标准 | C++17 |
 | 构建系统 | qmake（`VideoConverter.pro`） |
-| 外部依赖 | Windows x64 版 `ffmpeg.exe`、`ffprobe.exe` |
+| 外部依赖 | Windows x64 版 `ffmpeg.exe`、`ffprobe.exe`（随发布包内置） |
 
 > 工程按 Windows 桌面应用编写（查找 `.exe`、使用 `QSettings` 用户配置路径），不支持 Linux / macOS 构建。
 
@@ -56,28 +57,37 @@ nmake
 
 ## 准备 FFmpeg
 
-程序不内置 FFmpeg 二进制，需要自行准备 Windows x64 版本，任选一种方式：
+程序优先使用随发布包分发的内置工具，也允许用户改用自己的版本。
 
-**方式 A：放到项目目录（推荐，开箱即用）**
+**内置工具（默认）**
+
+发布目录下按下面的结构放置 Windows x64 版二进制，程序启动后自动使用：
 
 ```text
 third_party/ffmpeg/bin/ffmpeg.exe
 third_party/ffmpeg/bin/ffprobe.exe
 ```
 
-该目录已被 `.gitignore` 忽略，二进制不会进入仓库。
+该目录已被 `.gitignore` 忽略，二进制不会进入仓库；打包时必须手动把这两个文件复制到发布目录的同一相对位置（`windeployqt` 不会处理它们）。
 
-**方式 B：在程序内指定**
+**用户自定义工具**
 
-运行后点击“工具设置”，分别浏览选择 `ffmpeg.exe` 与 `ffprobe.exe`，点击“检测”确认可用，再保存。路径会持久化到用户配置。
+运行后点击“工具设置”，分别浏览选择 `ffmpeg.exe` 与 `ffprobe.exe`，点击“检测”确认可用后保存。路径会持久化到用户配置，下次启动自动沿用。
 
-**自动查找顺序**（未手动配置时）：
+**恢复默认工具**
 
-1. 已保存的配置
-2. 程序可执行文件同目录
-3. 程序目录下的 `ffmpeg/bin/`
-4. 编译期写入的 `third_party/ffmpeg/bin`（由 `.pro` 的 `FFMPEG_BIN_DIR` 定义）
-5. 系统 `PATH`
+在“工具设置”中点击“恢复默认”，输入框会切回内置工具路径；确定后清除用户配置，程序回到内置工具。
+
+**路径选择顺序**
+
+1. 用户自定义且文件仍然存在的路径
+2. 程序目录下的 `third_party/ffmpeg/bin/`（内置工具）
+3. 程序可执行文件同目录
+4. 程序目录下的 `ffmpeg/bin/`
+5. 编译期写入的 `third_party/ffmpeg/bin`（开发机构建兜底，由 `.pro` 的 `FFMPEG_BIN_DIR` 定义）
+6. 系统 `PATH`
+
+ffmpeg 与 ffprobe 各自独立判断：自定义文件失效时单独回退到内置工具；两者都找不到时，状态栏提示重新配置。
 
 **必需编码器**（启动自检会检查，缺任意一个都会在状态栏提示）：
 
@@ -91,6 +101,8 @@ third_party/ffmpeg/bin/ffprobe.exe
 下载来源与版本、许可证说明见 [`third_party/ffmpeg/README.md`](third_party/ffmpeg/README.md)。
 
 ## 使用说明
+
+默认使用随包分发的内置 FFmpeg。需要替换时点击“工具设置”，分别选择两个工具，检测后确定；点击“恢复默认”可清除自定义配置并回到内置工具。
 
 1. **导入视频**：点击“选择视频”，或把文件拖入拖放区。
    文件对话框默认过滤 `mp4 / avi / mov / mkv / wmv / m4v / flv / webm`，也可选择“所有文件”；能否处理以 FFprobe 能否识别为准。
@@ -125,13 +137,13 @@ VideoConverter/
 │   ├── videoinfo.h             # VideoInfo 数据模型 + 显示格式化
 │   ├── conversionrequest.h     # 一次转换的输入/输出/格式
 │   ├── formatcatalog.h/.cpp    # 目标格式目录：显示名、扩展名、所需编码器
-│   ├── ffmpeglocator.h/.cpp    # 工具定位、配置持久化、异步自检
+│   ├── ffmpeglocator.h/.cpp    # 内置/自定义路径解析、恢复默认、异步自检
 │   ├── mediaprobe.h/.cpp       # FFprobe JSON 解析为 VideoInfo
 │   ├── thumbnailgenerator.h/.cpp # 抽取单帧 PNG 缩略图
 │   └── videoconverter.h/.cpp   # FFmpeg 转码、进度解析、取消
 ├── ui/                         # 可复用界面组件
 │   ├── droparea.h/.cpp         # 拖放/点击选择区域
-│   └── settingsdialog.h/.cpp   # FFmpeg 路径设置对话框
+│   └── settingsdialog.h/.cpp   # FFmpeg 路径设置、检测与恢复默认
 ├── resources/
 │   ├── resources.qrc           # 资源清单（QSS + 图标）
 │   ├── style.qss               # 全局浅色主题样式
@@ -147,7 +159,7 @@ VideoConverter/
 
 | 模块 | 职责 | 关键约束 |
 |---|---|---|
-| `FFmpegLocator` | 保存/读取工具路径，自动查找，异步自检版本与编码器 | 三段式状态机；每段 10 秒超时；不阻塞 GUI |
+| `FFmpegLocator` | 管理内置/自定义路径与恢复默认，自动回退，异步自检 | 有效自定义优先；内置路径置顶；两个工具独立判断；三段式状态机，每段 10 秒超时 |
 | `MediaProbe` | 调用 FFprobe，把 JSON 解析为 `VideoInfo` | 15 秒超时；跳过封面图流；用请求序号丢弃过期回调 |
 | `ThumbnailGenerator` | 调用 FFmpeg 抽一帧 PNG | 取时长的 10%（最多 1 秒）；`image2pipe` 不落临时文件；30 秒超时 |
 | `VideoConverter` | 执行转码并解析进度 | argv 传参；`-progress pipe:1`；取消后删除半成品；stderr 仅保留末尾 64KB |
@@ -161,7 +173,7 @@ VideoConverter/
 
 ```text
 启动
-  └─ 读取配置 → 异步自检 FFmpeg/FFprobe/编码器 → 状态栏显示结果
+  └─ 读取配置（有效自定义优先，否则内置工具）→ 异步自检 FFmpeg/FFprobe/编码器 → 状态栏显示结果
 
 导入视频
   └─ 校验文件 → 异步 FFprobe → 信息面板 + 异步生成缩略图
@@ -182,7 +194,8 @@ VideoConverter/
 ## 配置与数据
 
 - 配置文件：`%APPDATA%\VideoConverter\VideoConverter.ini`（`QSettings::IniFormat`，用户作用域）。
-- 配置项：`tools/ffmpegPath`、`tools/ffprobePath`。
+- 配置项：`tools/ffmpegPath`、`tools/ffprobePath`；为空或文件失效时自动使用内置工具。
+- “工具设置 → 恢复默认”会删除上述两个键，回到内置工具。
 - 不写程序目录；不收集任何用户数据；转换输出写入用户选择的目录。
 
 ## 开发约定
@@ -201,7 +214,7 @@ VideoConverter/
 - 尚未实现：批量转换、任务队列、历史记录、分辨率/质量设置、深色模式、打开输出目录。
 - 缩略图按 400px 宽生成，全屏预览为等比平滑放大，极端要求下清晰度有限。
 - SVG 图标依赖 Qt 的 SVG 图片插件；发布时若未随包提供，程序会回退到手绘图标。
-- FFmpeg 二进制不随仓库分发，换机器需重新放置或配置路径。
+- FFmpeg 二进制不随仓库分发；发布包必须包含 `third_party/ffmpeg/bin/`，否则程序会提示重新配置。
 - 启用 GPL 组件（libx264）的 FFmpeg 构建整体按 GPL 分发，正式发布前需确认许可证义务。
 
 ## 相关文档

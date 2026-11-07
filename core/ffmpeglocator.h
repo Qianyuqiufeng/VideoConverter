@@ -3,7 +3,7 @@
 // -----------------------------------------------------------------------------
 // 职责：
 //   1. 维护 ffmpeg.exe / ffprobe.exe 的路径，并持久化到用户配置文件；
-//   2. 在用户未手动配置时，按约定顺序自动搜索常见安装位置；
+//   2. 用户配置有效时优先使用，否则回退到随程序分发的内置工具；
 //   3. 以异步方式检测两个工具能否运行、版本号是否可读、所需编码器是否齐全。
 //
 // 设计要点：
@@ -51,10 +51,16 @@ class FFmpegLocator : public QObject
 public:
     explicit FFmpegLocator(QObject *parent = nullptr);
 
-    // 从配置文件读取路径；未配置的项会尝试自动探测。
+    // 从配置文件读取路径；用户配置有效时优先，否则回退到内置工具。
     void loadSettings();
     // 把当前路径写入配置文件（INI），并立即 sync 落盘。
     void saveSettings() const;
+
+    // 内置工具的默认路径（忽略用户配置），找不到时返回空字符串。
+    static QString defaultFfmpegPath();
+    static QString defaultFfprobePath();
+    // 恢复默认：删除配置中的两个路径，并把内存路径重置为内置工具。
+    void restoreDefaults();
 
     // 当前使用的工具路径（可能为空，表示尚未找到）。
     QString ffmpegPath() const;
@@ -93,8 +99,11 @@ private:
     void handleFinished();
     // 统一失败出口：停止计时、结束进程、填充结果并发出 checkFinished。
     void finishWithError(const QString &userMessage, const QString &detail);
+    // 按“有效用户配置 -> 内置搜索”的规则确定两个工具的最终路径。
+    void resolveEffectivePaths(const QString &savedFfmpegPath,
+                               const QString &savedFfprobePath);
     // 按约定顺序搜索工具可执行文件；找不到返回空字符串。
-    QString resolveTool(const QString &toolName) const;
+    static QString resolveTool(const QString &toolName);
 
     // 当前生效的工具路径。
     QString m_ffmpegPath;
