@@ -1,0 +1,20 @@
+# Local FFmpeg binaries are never committed.
+# The directory itself stays tracked through .gitkeep.
+/third_party/ffmpeg/bin/*
+!/third_party/ffmpeg/bin/.gitkeep
+
+# Qt generated files
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+.qmake.stash
+
+# In-source build outputs
+/debug/
+/release/
+*.o
+*.obj
+Makefile
+Makefile.Debug
+Makefile.Release
